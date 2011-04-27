@@ -1,5 +1,5 @@
 {-# LANGUAGE PackageImports, StandaloneDeriving, DeriveFunctor, TupleSections #-}
-
+{-# LANGUAGE RankNTypes #-}
 module System.GetConf where
 
 import System.Environment
@@ -19,9 +19,13 @@ import "mtl" Control.Monad.Error
 
 import System.GetConf.SimpleIni
 
-deriving instance Functor ArgDescr
-deriving instance Functor OptDescr
+mapOpt :: (a -> b) -> OptDescr a -> OptDescr b
+mapOpt f (Option shorts longs arg desc) = Option shorts longs (mapArg f arg) desc
 
+mapArg :: (a -> b) -> ArgDescr a -> ArgDescr b
+mapArg f (ReqArg a desc) = ReqArg (f . a) desc
+mapArg f (OptArg a desc) = OptArg (f . a) desc
+mapArg f (NoArg  a ) = NoArg $ f a
 
 --data OptDescr a = Option [Char] [String] (ArgDescr a) String
 
@@ -29,7 +33,6 @@ for = flip map
 infixl 4 <$$>
 (<$$>) = flip map
 unlessM p m = p >>= \p -> unless p m
-
 
 -- | From a list of key/value pairs and a list of option descriptions
 -- extract the given options
@@ -79,14 +82,14 @@ findConfFileByName name conffile defaultConfSites = do
   appdir <- getAppUserDataDirectory name
   homedir <- getHomeDirectory
   confFiles <- filterM doesFileExist . map (</> conffile) $
-               maybeConfdir ++
-               ((</> name) <$> maybeConfdir)  ++
-               [ appdir
-               , (homedir </> ("." ++ name ++ ".d"))
-               , homedir
-               ] ++
-               defaultConfSites ++
-               ((</> name) <$> defaultConfSites)
+    maybeConfdir ++
+    ((</> name) <$> maybeConfdir)  ++
+    [ appdir
+    , (homedir </> ("." ++ name ++ ".d"))
+    , homedir
+    ] ++
+    defaultConfSites ++
+    ((</> name) <$> defaultConfSites)
                
   return confFiles
   where
@@ -122,15 +125,15 @@ optFromEnvironment prefix optDesc =
                                 Option ss (map (prefix ++) ls) args desc)
     
 -- | Combine two sets of option descriptions but keep the results seperate
-combineOptions :: (Functor f) => [f a] -> [f b] -> [f (Either a b)]
-combineOptions lopts ropts = map (fmap Left) lopts ++ map (fmap Right) ropts
+combineOptions :: [OptDescr a] -> [OptDescr b] -> [OptDescr (Either a b)]
+combineOptions lopts ropts = map (mapOpt Left) lopts ++ map (mapOpt Right) ropts
 
 -- | Get combined options, seperating the results
-withCombinedOptions :: (Functor m) => 
-     ([OptDescr (Either a b)] -> m [Either a b])
+withCombinedOptions :: (Functor f) => 
+     ([OptDescr (Either a b)] -> f [Either a b])
      -> [OptDescr a]
      -> [OptDescr b]
-     -> m ([a], [b])
+     -> f ([a], [b])
 withCombinedOptions action lopts ropts = partitionEithers <$> action (combineOptions lopts ropts)
 
 -- | Thin wrapper around getOpt, gets options from program arguments
@@ -138,6 +141,7 @@ optFromArgs :: ArgOrder a -> [OptDescr a] -> IO [a]
 optFromArgs argOrder optDescs = do 
   args <- getArgs
   let (opts, noopts, errors) = getOpt argOrder optDescs args
+  print noopts -- DEBUG
   unless (null errors) $ do
     forM errors putStrLn
     putStrLn "recognized Options:"
@@ -151,7 +155,7 @@ catRights ((Left _) : xs ) = catRights xs
 catRights ((Right x) : xs ) = x : catRights xs
 
 data ConfOptions a = ConfOptions 
-  { argOrder     :: ArgOrder (Either String a) -- ^ Argument order for getOpt
+  { argOrder     :: ArgOrder (Either a String) -- ^ Argument order for getOpt
   , defaultConf  :: Maybe String -- ^ default config filename
   , includeEnv   :: Bool -- ^ Read options from environment?
   , envPrefix    :: String -- ^ Global Prefix for environmental variables
@@ -163,7 +167,7 @@ data ConfOptions a = ConfOptions
   }
 
 getConfDefaults = ConfOptions 
-  { argOrder    = RequireOrder
+  { argOrder    = Permute
   , defaultConf = Nothing
   , includeEnv  = True
   , envPrefix   = ""
@@ -174,10 +178,11 @@ getConfDefaults = ConfOptions
   , programName = ""
   }  
 
+getConf :: [OptDescr a] -> ConfOptions a -> IO [a]
 getConf options confOpts = do
-  (argConfFiles, opts) <- withCombinedOptions (optFromArgs $ argOrder confOpts)
-                      [Option "" ["conf"] (ReqArg id "path") "Path to configuration file"]
-                      options
+  (opts, argConfFiles) <- withCombinedOptions (optFromArgs $ argOrder confOpts)
+                            options
+                            [Option "" ["conf"] (ReqArg id "path") "Path to configuration file"]
   defaultConfFiles <- case defaultConf confOpts of
     Nothing -> return []
     Just filename -> findConfFileByName 
@@ -190,3 +195,4 @@ getConf options confOpts = do
     Right fopts -> return fopts
   envOpts <- optFromEnvironment (envPrefix confOpts) options
   return $ concat [fileOpts, envOpts, opts]
+
