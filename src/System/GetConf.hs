@@ -29,6 +29,9 @@ mapArg f (ReqArg a desc) = ReqArg (f . a) desc
 mapArg f (OptArg a desc) = OptArg (f . a) desc
 mapArg f (NoArg  a ) = NoArg $ f a
 
+mapLongs :: ([String] -> [String]) -> OptDescr a -> OptDescr a
+mapLongs f (Option shorts longs args doc) = (Option shorts (f longs) args doc)
+
 --data OptDescr a = Option [Char] [String] (ArgDescr a) String
 
 for = flip map
@@ -118,8 +121,7 @@ optFromSimpleIni filename optDesc = do
 -- | Get options from environmental variables
 optFromEnvironment :: String -> [OptDescr a] -> IO [a]
 optFromEnvironment prefix optDesc = 
-  fmap (flip (optFromList) $ addPrefix optDesc)
-                                    getEnvironment
+  fmap (flip (optFromList) $ (map (mapLongs (map $ map toUpper)) . addPrefix $ optDesc)) getEnvironment
   where
     addPrefix = if null prefix
                     then id
@@ -196,4 +198,3 @@ getConf options confOpts = do
     Right fopts -> return fopts
   envOpts <- optFromEnvironment (envPrefix confOpts) options
   return $ concat [fileOpts, envOpts, opts]
-
