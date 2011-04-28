@@ -19,6 +19,8 @@ import "mtl" Control.Monad.Error
 
 import System.GetConf.SimpleIni
 
+replace a b = map (\x -> if x == a then b else x)
+
 mapOpt :: (a -> b) -> OptDescr a -> OptDescr b
 mapOpt f (Option shorts longs arg desc) = Option shorts longs (mapArg f arg) desc
 
@@ -111,7 +113,7 @@ optFromSimpleIni filename optDesc = do
     ++ errors
   return opts
   where 
-    combine (x,y) = if null x then y else x ++ "/" ++ y
+    combine (x,y) = if null x then y else x ++ "_" ++ y
 
 -- | Get options from environmental variables
 optFromEnvironment :: String -> [OptDescr a] -> IO [a]
@@ -141,7 +143,6 @@ optFromArgs :: ArgOrder a -> [OptDescr a] -> IO [a]
 optFromArgs argOrder optDescs = do 
   args <- getArgs
   let (opts, noopts, errors) = getOpt argOrder optDescs args
-  print noopts -- DEBUG
   unless (null errors) $ do
     forM errors putStrLn
     putStrLn "recognized Options:"
